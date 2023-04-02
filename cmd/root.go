@@ -6,22 +6,14 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
-	"strings"
 	"time"
 
-	"github.com/yizhixiaokong/BullshitGeneratorGo/utils"
-
 	"github.com/spf13/cobra"
+	rs "github.com/yizhixiaokong/BullshitGeneratorGo/internal/pkg/generator/random_string"
+	"github.com/yizhixiaokong/BullshitGeneratorGo/utils"
 )
-
-// letterBytes 包含英文字母数字换行符和空格的字符列表
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \n"
-
-// threshold 文件写入阈值
-const threshold int64 = 1024 * 1024 * 10 // 10MB
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -44,15 +36,13 @@ func Execute() {
 }
 
 func init() {
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	// flag 'n',用于指定生成的名字
 	rootCmd.Flags().StringP("name", "n", "bullshit", "name of the file")
 	// flag 'a',当指定时，如果文件存在，以追加的方式写入文件
 	rootCmd.Flags().BoolP("append", "a", false, "append to the file")
 	// flag 's',用于指定生成的字符串大小，单位为字节，优先级最低
-	rootCmd.Flags().Int64P("size", "s", 1000, "size of the string, unit is byte, priority is lowest,range is [0,2147483648]")
+	rootCmd.Flags().Int64P("size", "s", 512, "size of the string, unit is byte, priority is lowest,range is [0,2147483648]")
 	// flag 'k',用于指定生成的字符串大小，单位为kb，优先级高于size
 	rootCmd.Flags().IntP("kbs", "k", 0, "size of the string, unit is kb, priority is higher than length,range is [0,2097152]")
 	// flag 'm',用于指定生成的字符串大小，单位为mb，优先级高于kb和size
@@ -163,74 +153,41 @@ func RunE(cmd *cobra.Command, args []string) error {
 	append := cmd.Flags().Changed("append")
 
 	// 生成随机字符串并写入文件
-	writeRandomStringToFile(size, name, append)
+	WriteRandomStringToFile(size, name, append)
 	return nil
 
 }
 
-// 将指定大小的随机字符串写入文件
-func writeRandomStringToFile(size int64, name string, append bool) error {
-
-	// 打开或创建文件
-	// 判断文件是否有任何后缀
-	if !strings.Contains(name, ".") {
-		// 如果没有后缀，添加后缀.log
-		name += ".log"
-	}
-
-	file, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY, 0644)
+// WriteRandomStringToFile 将指定大小的随机字符串写入文件
+func WriteRandomStringToFile(size int64, name string, append bool) error {
+	// 添加文件后缀名
+	name = utils.AddFileExtensionIfNeeded(name, "log")
+	// 打开文件
+	writer, err := utils.NewFileWriter(name)
 	if err != nil {
 		fmt.Println("open file failed, err:", err)
 		return err
 	}
-	defer file.Close()
+	defer writer.Close()
 
-	// 如果指定了追加模式，将文件指针移动到文件末尾
-	if append {
-		_, err := file.Seek(0, io.SeekEnd)
-		if err != nil {
-			fmt.Println("seek file failed, err:", err)
-			return err
-		}
-	} else {
-		// 如果不是追加模式，清空文件
-		err := file.Truncate(0)
+	if !append {
+		// 清空文件
+		err := writer.Truncate()
 		if err != nil {
 			fmt.Println("truncate file failed, err:", err)
 			return err
 		}
-	}
-
-	// 生成随机字符串流
-	bullshit := utils.GetRandomStringStream(size, letterBytes, threshold)
-
-	// 记录已经写入文件的字节数
-	var written int64
-	// 进度
-	var progress int64
-
-	for s := range bullshit {
-		len := len(s)
-		// 写入文件
-		if _, err := file.WriteString(s); err != nil {
-			fmt.Println("write file failed, err:", err)
+	} else {
+		// 移动文件指针到文件末尾
+		err := writer.SeekEnd()
+		if err != nil {
+			fmt.Println("seek file failed, err:", err)
 			return err
 		}
-		written += int64(len)
-		nowProgress := written * 100 / size
-		// 只有当写入大小大于阈值，才打印进度
-		if size > threshold {
-			// 当进度每增加1%时，打印进度
-			if nowProgress >= progress+1 {
-				// 进度条带箭头
-				fmt.Printf("\rwrite file progress: [%-50s] %d%%", strings.Repeat("=", int(nowProgress/2))+">", nowProgress)
-				progress = nowProgress
-			}
-		}
 	}
-	if size > threshold {
-		fmt.Println()
-	}
-	fmt.Println("write file success, all size:", size, "bytes")
-	return nil
+
+	// NewRandomStringGenerator
+	generator := rs.NewRandomStringGenerator()
+	// 写入随机字符串
+	return generator.WriteTo(writer, size, generator.Threshold)
 }
